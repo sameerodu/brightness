@@ -1,0 +1,541 @@
+name: Build Brightness Slider APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Create Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p app/src/main/java/com/brightnessslider
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/drawable
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.brightnessslider'
+              compileSdk 36
+
+              defaultConfig {
+                  applicationId 'com.brightnessslider'
+                  minSdk 26
+                  targetSdk 36
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="Brightness Slider"
+                  android:allowBackup="false"
+                  android:supportsRtl="true">
+
+                  <receiver
+                      android:name=".BrightnessWidgetProvider"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                      </intent-filter>
+
+                      <meta-data
+                          android:name="android.appwidget.provider"
+                          android:resource="@xml/brightness_widget_info" />
+
+                  </receiver>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/brightnessslider/BrightnessWidgetProvider.java <<'EOF'
+          package com.brightnessslider;
+
+          import android.app.PendingIntent;
+          import android.appwidget.AppWidgetManager;
+          import android.appwidget.AppWidgetProvider;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.provider.Settings;
+          import android.widget.RemoteViews;
+
+          public class BrightnessWidgetProvider extends AppWidgetProvider {
+
+              private static final String ACTION_LEVEL =
+                      "com.brightnessslider.LEVEL";
+
+              private static final String EXTRA_LEVEL = "level";
+
+              private static final int STEPS = 20;
+
+              private static final int[] CELLS = {
+                      R.id.cell01,
+                      R.id.cell02,
+                      R.id.cell03,
+                      R.id.cell04,
+                      R.id.cell05,
+                      R.id.cell06,
+                      R.id.cell07,
+                      R.id.cell08,
+                      R.id.cell09,
+                      R.id.cell10,
+                      R.id.cell11,
+                      R.id.cell12,
+                      R.id.cell13,
+                      R.id.cell14,
+                      R.id.cell15,
+                      R.id.cell16,
+                      R.id.cell17,
+                      R.id.cell18,
+                      R.id.cell19,
+                      R.id.cell20
+              };
+
+              @Override
+              public void onUpdate(
+                      Context context,
+                      AppWidgetManager manager,
+                      int[] appWidgetIds) {
+
+                  for (int id : appWidgetIds) {
+                      updateWidget(context, manager, id);
+                  }
+              }
+
+              @Override
+              public void onReceive(
+                      Context context,
+                      Intent intent) {
+
+                  super.onReceive(context, intent);
+
+                  if (!ACTION_LEVEL.equals(intent.getAction())) {
+                      return;
+                  }
+
+                  int level = intent.getIntExtra(EXTRA_LEVEL, -1);
+
+                  if (level >= 0 && level < STEPS) {
+                      setBrightness(context, level);
+                  }
+
+                  refreshAllWidgets(context);
+              }
+
+              private static void refreshAllWidgets(Context context) {
+
+                  AppWidgetManager manager =
+                          AppWidgetManager.getInstance(context);
+
+                  ComponentName component =
+                          new ComponentName(
+                                  context,
+                                  BrightnessWidgetProvider.class);
+
+                  int[] ids =
+                          manager.getAppWidgetIds(component);
+
+                  for (int id : ids) {
+                      updateWidget(context, manager, id);
+                  }
+              }
+
+              private static void updateWidget(
+                      Context context,
+                      AppWidgetManager manager,
+                      int appWidgetId) {
+
+                  RemoteViews views =
+                          new RemoteViews(
+                                  context.getPackageName(),
+                                  R.layout.brightness_widget);
+
+                  int currentLevel = getBrightnessLevel(context);
+
+                  for (int i = 0; i < STEPS; i++) {
+
+                      int cell = CELLS[i];
+
+                      views.setInt(
+                              cell,
+                              "setBackgroundResource",
+                              i <= currentLevel
+                                      ? R.drawable.cell_filled
+                                      : R.drawable.cell_empty);
+
+                      Intent intent =
+                              new Intent(
+                                      context,
+                                      BrightnessWidgetProvider.class);
+
+                      intent.setAction(ACTION_LEVEL);
+                      intent.putExtra(EXTRA_LEVEL, i);
+
+                      PendingIntent pendingIntent =
+                              PendingIntent.getBroadcast(
+                                      context,
+                                      1000 + i,
+                                      intent,
+                                      PendingIntent.FLAG_UPDATE_CURRENT
+                                              | PendingIntent.FLAG_IMMUTABLE);
+
+                      views.setOnClickPendingIntent(
+                              cell,
+                              pendingIntent);
+                  }
+
+                  Intent settingsIntent =
+                          new Intent(
+                                  Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                  Uri.parse(
+                                          "package:" +
+                                          context.getPackageName()));
+
+                  PendingIntent settingsPendingIntent =
+                          PendingIntent.getActivity(
+                                  context,
+                                  999,
+                                  settingsIntent,
+                                  PendingIntent.FLAG_UPDATE_CURRENT
+                                          | PendingIntent.FLAG_IMMUTABLE);
+
+                  views.setOnClickPendingIntent(
+                          R.id.brightness_icon,
+                          settingsPendingIntent);
+
+                  manager.updateAppWidget(
+                          appWidgetId,
+                          views);
+              }
+
+              private static int getBrightnessLevel(
+                      Context context) {
+
+                  try {
+
+                      int value =
+                              Settings.System.getInt(
+                                      context.getContentResolver(),
+                                      Settings.System.SCREEN_BRIGHTNESS,
+                                      128);
+
+                      return Math.max(
+                              0,
+                              Math.min(
+                                      STEPS - 1,
+                                      Math.round(
+                                              (value - 1)
+                                                      * (STEPS - 1)
+                                                      / 254f)));
+
+                  } catch (Exception ignored) {
+
+                      return 10;
+                  }
+              }
+
+              private static void setBrightness(
+                      Context context,
+                      int level) {
+
+                  if (!Settings.System.canWrite(context)) {
+
+                      Intent intent =
+                              new Intent(
+                                      Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                      Uri.parse(
+                                              "package:" +
+                                              context.getPackageName()));
+
+                      intent.addFlags(
+                              Intent.FLAG_ACTIVITY_NEW_TASK);
+
+                      context.startActivity(intent);
+
+                      return;
+                  }
+
+                  try {
+
+                      Settings.System.putInt(
+                              context.getContentResolver(),
+                              Settings.System.SCREEN_BRIGHTNESS_MODE,
+                              Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+
+                      int brightness =
+                              Math.max(
+                                      1,
+                                      Math.min(
+                                              255,
+                                              Math.round(
+                                                      1 +
+                                                      level * 254f /
+                                                      (STEPS - 1))));
+
+                      Settings.System.putInt(
+                              context.getContentResolver(),
+                              Settings.System.SCREEN_BRIGHTNESS,
+                              brightness);
+
+                  } catch (SecurityException ignored) {
+                  }
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/layout/brightness_widget.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <LinearLayout
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/widget_root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="@drawable/widget_background"
+              android:gravity="center_vertical"
+              android:orientation="horizontal"
+              android:paddingStart="12dp"
+              android:paddingEnd="12dp">
+
+              <TextView
+                  android:id="@+id/brightness_icon"
+                  android:layout_width="30dp"
+                  android:layout_height="match_parent"
+                  android:gravity="center"
+                  android:text="☼"
+                  android:textColor="#FFFFFF"
+                  android:textSize="22sp" />
+
+              <TextView
+                  android:id="@+id/cell01"
+                  style="@style/SliderCell"
+                  android:layout_marginStart="6dp" />
+
+              <TextView
+                  android:id="@+id/cell02"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell03"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell04"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell05"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell06"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell07"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell08"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell09"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell10"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell11"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell12"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell13"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell14"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell15"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell16"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell17"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell18"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell19"
+                  style="@style/SliderCell" />
+
+              <TextView
+                  android:id="@+id/cell20"
+                  style="@style/SliderCell" />
+
+          </LinearLayout>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <resources>
+
+              <style
+                  name="AppTheme"
+                  parent="@android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+              </style>
+
+              <style name="SliderCell">
+                  <item name="android:layout_width">0dp</item>
+                  <item name="android:layout_height">10dp</item>
+                  <item name="android:layout_weight">1</item>
+                  <item name="android:layout_marginEnd">2dp</item>
+              </style>
+
+          </resources>
+          EOF
+
+          cat > app/src/main/res/drawable/widget_background.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+
+              <solid android:color="#000000" />
+
+              <corners android:radius="1000dp" />
+
+          </shape>
+          EOF
+
+          cat > app/src/main/res/drawable/cell_filled.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+
+              <solid android:color="#FFFFFF" />
+
+              <corners android:radius="1000dp" />
+
+          </shape>
+          EOF
+
+          cat > app/src/main/res/drawable/cell_empty.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+
+              <solid android:color="#333333" />
+
+              <corners android:radius="1000dp" />
+
+          </shape>
+          EOF
+
+          cat > app/src/main/res/xml/brightness_widget_info.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <appwidget-provider
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="250dp"
+              android:minHeight="40dp"
+              android:minResizeWidth="250dp"
+              android:minResizeHeight="40dp"
+              android:resizeMode="horizontal"
+              android:updatePeriodMillis="0"
+              android:initialLayout="@layout/brightness_widget"
+              android:widgetCategory="home_screen" />
+          EOF
+
+          echo "Android project created."
+          find app -type f | sort
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          test -f "$APK"
+
+          echo "APK successfully created:"
+          ls -lh "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrightnessSlider-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
